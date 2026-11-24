@@ -50,6 +50,10 @@ Terraform checks, plan, apply, and variable publication succeed.
 The deploy job reads cluster, service, task family, container name, and URL
 directly from the called Terraform workflow's outputs.
 Tests can be run locally using the command above.
+Set environment variable `APP_VERSION` in GitHub's `menteeTest` configuration
+to the desired SemVer, e.g. `1.2.3`. The build embeds it in the image and the
+Python endpoint returns it as `version`. It defaults to `0.0.0` when unset.
+Update it manually before a new release; retries reuse the already built image.
 Images use `<commit-sha>-<run_number>` tags. Retries reuse the same image;
 new manual runs produce a new tag and rebuild without cached layers.
 AWS authentication uses OIDC. No version-management token is required.
@@ -58,6 +62,7 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 
 | Variable | Value |
 | --- | --- |
+| `APP_VERSION` | Application SemVer, e.g. `1.2.3`; defaults to `0.0.0` |
 | `AWS_REGION` | AWS region containing ECR and ECS |
 | `ECR_REPOSITORY` | Existing ECR repository name, with tag immutability set to `IMMUTABLE` |
 | `ECS_CLUSTER` | Automatically published from Terraform |

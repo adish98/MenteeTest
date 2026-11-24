@@ -7,9 +7,10 @@ app = Flask(__name__)
 
 @app.get("/")
 def hello():
+    app_version = os.environ.get("APP_VERSION", "0.0.0")
     return jsonify(
         message="Hello World",
-        version=os.environ.get("APP_VERSION", "0.0.0"),
+        version=app_version,
     )
 
 

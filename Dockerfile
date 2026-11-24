@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY hello_world.py .
 
+# Bake the release version into the image so the running app reports it.
+ARG APP_VERSION=0.0.0
+ENV APP_VERSION=$APP_VERSION
+
 USER 10001:10001
 EXPOSE 8080
 

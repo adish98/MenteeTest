@@ -5,3 +5,6 @@
 *.tfplan
 crash.log
 
+
+# PowerShell module cache accidentally written into the repo
+Microsoft/

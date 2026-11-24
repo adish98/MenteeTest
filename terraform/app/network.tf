@@ -67,7 +67,7 @@ resource "aws_security_group" "app" {
     security_groups = [aws_security_group.alb.id]
   }
 
-  # Public IPs provide ECR and CloudWatch access without a NAT Gateway.
+  # Public IPs provide image pulls from GHCR without a NAT Gateway.
   egress {
     protocol    = "-1"
     from_port   = 0

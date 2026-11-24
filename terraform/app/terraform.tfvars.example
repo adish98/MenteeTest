@@ -1,4 +1,2 @@
 name      = "exam-adi-shmul"
-image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/exam-adi-shmul:bootstrap"
-# Optional: leave unset to create the execution role with the exam permissions boundary.
-# execution_role_arn = "arn:aws:iam::123456789012:role/exam-existing-execution"
+image_uri = "ghcr.io/adish98/menteetest:bootstrap"

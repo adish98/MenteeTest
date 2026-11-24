@@ -43,7 +43,9 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image: ${{ steps.image.outputs.name }}@${{ steps.existing.outputs.digest || steps.push.outputs.digest }}
+      # Deployed by version tag so ECS, Terraform and GHCR all show the release.
+      # Published version tags are never rebuilt (see "Reuse release on retry").
+      image: ${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate application version
@@ -119,14 +121,9 @@ jobs:
             '.message == "Hello World" and .version == $v'
       - name: Push image
         if: steps.existing.outputs.digest == '' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        id: push
         env:
           IMAGE: ${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
-        run: |
-          set -euo pipefail
-          docker push "$IMAGE"
-          ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
-          echo "digest=${ref#*@}" >> "$GITHUB_OUTPUT"
+        run: docker push "$IMAGE"
 
   terraform:
     needs: build

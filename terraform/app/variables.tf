@@ -10,6 +10,6 @@ variable "name" {
 }
 
 variable "image_uri" {
-  description = "Full URI of an existing Linux AMD64 container image, preferably pinned by digest."
+  description = "Full URI of an existing Linux AMD64 container image, tagged with the app version, for example ghcr.io/adish98/menteetest:1.2.4."
   type        = string
 }

@@ -75,7 +75,7 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | `APP_VERSION` | Application and image version, for example `1.2.3` |
 
 The task definition must support Linux AMD64 and expose container port 8080.
-The workflow registers a revision, deploys the GHCR digest, waits for service
+The workflow registers a revision, deploys the GHCR version tag (for example `:1.2.4`), waits for service
 stability, then checks `/health`. It enables ECS rolling
 deployment with automatic rollback and keeps the existing tasks healthy while
 starting replacements (100% minimum healthy, 200% maximum). The service must
@@ -148,8 +148,8 @@ From the repository root (PowerShell):
 Copy-Item terraform/app/terraform.tfvars.example terraform/app/terraform.tfvars
 ```
 
-Edit `image_uri` to the full URI of the existing image, preferably pinned by
-digest. Set `name` if desired, then deploy:
+Edit `image_uri` to the full URI of the existing image, tagged with its
+version (for example `ghcr.io/adish98/menteetest:1.2.4`). Set `name` if desired, then deploy:
 
 ```powershell
 terraform -chdir=terraform/app init -backend-config="bucket=YOUR_STATE_BUCKET" -backend-config="region=YOUR_BUCKET_REGION"
@@ -195,7 +195,7 @@ Terraform state; deregister any remaining revisions separately if desired.
 `.github/workflows/terraform.yaml` is reusable and also checks PRs when app
 Terraform files or the Terraform workflow change. PRs run formatting, validation,
 and TFLint only, without AWS access. The app workflow calls it after building and
-pushing an image on `main`, passing the image digest as the initial task image.
+pushing an image on `main`, passing the versioned image (`ghcr.io/...:<APP_VERSION>`) as the initial task image.
 The called workflow runs in separate jobs:
 
 1. `lint`: formatting, validation and TFLint.

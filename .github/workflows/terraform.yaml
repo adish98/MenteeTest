@@ -93,7 +93,7 @@ jobs:
       - name: Connect to AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.TF_APPLY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Initialize remote state
         run: |

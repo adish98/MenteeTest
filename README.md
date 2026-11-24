@@ -59,7 +59,6 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | Variable | Value |
 | --- | --- |
 | `AWS_REGION` | AWS region containing ECR and ECS |
-| `AWS_ROLE_ARN` | IAM role assumed through GitHub OIDC |
 | `ECR_REPOSITORY` | Existing ECR repository name, with tag immutability set to `IMMUTABLE` |
 | `ECS_CLUSTER` | Automatically published from Terraform |
 | `ECS_SERVICE` | Automatically published from Terraform |
@@ -160,7 +159,6 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
 | `TF_STATE_BUCKET` | Existing S3 state bucket name |
 | `TF_STATE_REGION` | AWS region of the state bucket |
-| `TF_APPLY_ROLE_ARN` | OIDC role with permissions to provision app resources |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
 
 The Terraform apply role is separate from the application deployment role.
@@ -194,6 +192,10 @@ The application deploy job then updates the ECS service with the built image.
 After a successful apply on `main`, Terraform CI automatically creates or updates
 `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION`, `ECS_CONTAINER_NAME`, and
 `APP_URL` repository variables from the Terraform outputs.
+
+Set `AWS_ROLE_ARN` and `TF_APPLY_ROLE_ARN` as **environment secrets** under
+**Settings > Environments > menteeTest**. The workflows read role ARNs using
+the `secrets` context.
 
 Add the **environment secret** `TF_VARIABLES_TOKEN` under **Settings > Environments > menteeTest**: a fine-grained GitHub token
 restricted to this repository with **Variables: read and write** permission.

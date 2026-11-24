@@ -14,15 +14,15 @@ on:
         type: string
     outputs:
       ecs_cluster:
-        value: ${{ jobs.plan-and-apply.outputs.ecs_cluster }}
+        value: ${{ jobs.apply.outputs.ecs_cluster }}
       ecs_service:
-        value: ${{ jobs.plan-and-apply.outputs.ecs_service }}
+        value: ${{ jobs.apply.outputs.ecs_service }}
       task_definition:
-        value: ${{ jobs.plan-and-apply.outputs.task_definition }}
+        value: ${{ jobs.apply.outputs.task_definition }}
       container_name:
-        value: ${{ jobs.plan-and-apply.outputs.container_name }}
+        value: ${{ jobs.apply.outputs.container_name }}
       app_url:
-        value: ${{ jobs.plan-and-apply.outputs.app_url }}
+        value: ${{ jobs.apply.outputs.app_url }}
 
 permissions:
   contents: read
@@ -58,24 +58,15 @@ jobs:
       - name: Lint
         run: tflint --format compact
 
-  plan-and-apply:
+  plan:
     needs: lint
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: menteeTest
-    timeout-minutes: 40
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-    concurrency:
-      group: terraform-app
-      cancel-in-progress: false
-    outputs:
-      ecs_cluster: ${{ steps.outputs.outputs.ecs_cluster }}
-      ecs_service: ${{ steps.outputs.outputs.ecs_service }}
-      task_definition: ${{ steps.outputs.outputs.task_definition }}
-      container_name: ${{ steps.outputs.outputs.container_name }}
-      app_url: ${{ steps.outputs.outputs.app_url }}
     defaults:
       run:
         working-directory: terraform/app
@@ -103,24 +94,91 @@ jobs:
           region: ${{ vars.AWS_REGION }}
       - name: Initialize remote state
         run: |
-          terraform init -lockfile=readonly \
-            -backend-config="bucket=$TF_STATE_BUCKET" \
-            -backend-config="region=$TF_STATE_REGION"
+          terraform init -lockfile=readonly             -backend-config="bucket=$TF_STATE_BUCKET"             -backend-config="region=$TF_STATE_REGION"
       - name: Plan
         run: terraform plan -lock-timeout=5m -out=app.tfplan
-      - name: Apply on main
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      # Reviewers read the plan here before approving the apply job.
+      - name: Publish plan for review
+        run: |
+          {
+            echo '## Terraform plan'
+            echo
+            echo "Image: \`$TF_VAR_image_uri\`"
+            echo
+            echo '```text'
+            terraform show -no-color app.tfplan | tail -c 900000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-app-plan
+          path: terraform/app/app.tfplan
+          retention-days: 1
+          if-no-files-found: error
+
+  # Manual gate. The menteeTest-approval environment must have required
+  # reviewers; this job has no AWS access, it only waits for approval.
+  approve:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: menteeTest-approval
+    timeout-minutes: 5
+    steps:
+      - name: Plan approved
+        run: echo "Plan approved by a reviewer; continuing to apply."
+
+  apply:
+    needs: approve
+    runs-on: ubuntu-latest
+    environment: menteeTest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-app
+      cancel-in-progress: false
+    outputs:
+      ecs_cluster: ${{ steps.outputs.outputs.ecs_cluster }}
+      ecs_service: ${{ steps.outputs.outputs.ecs_service }}
+      task_definition: ${{ steps.outputs.outputs.task_definition }}
+      container_name: ${{ steps.outputs.outputs.container_name }}
+      app_url: ${{ steps.outputs.outputs.app_url }}
+    defaults:
+      run:
+        working-directory: terraform/app
+    env:
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.14.8'
+          terraform_wrapper: false
+      - name: Connect to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::030454160336:role/exam-adi-shmul
+          aws-region: ${{ vars.AWS_REGION }}
+          retry-max-attempts: 3
+      - name: Initialize remote state
+        run: |
+          terraform init -lockfile=readonly             -backend-config="bucket=$TF_STATE_BUCKET"             -backend-config="region=$TF_STATE_REGION"
+      - name: Download approved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-app-plan
+          path: terraform/app
+      # Applies exactly the reviewed plan. Terraform rejects it as stale if the
+      # state changed since planning.
+      - name: Apply approved plan
         run: terraform apply -lock-timeout=5m app.tfplan
       - name: Export deployment outputs
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: outputs
         run: |
-          for mapping in \
-            ecs_cluster:ecs_cluster_name \
-            ecs_service:ecs_service_name \
-            task_definition:ecs_task_definition_family \
-            container_name:ecs_container_name \
-            app_url:application_url; do
+          for mapping in             ecs_cluster:ecs_cluster_name             ecs_service:ecs_service_name             task_definition:ecs_task_definition_family             container_name:ecs_container_name             app_url:application_url; do
             value=$(terraform output -raw "${mapping#*:}")
             echo "${mapping%%:*}=$value" >> "$GITHUB_OUTPUT"
           done

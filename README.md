@@ -196,8 +196,24 @@ Terraform state; deregister any remaining revisions separately if desired.
 Terraform files or the Terraform workflow change. PRs run formatting, validation,
 and TFLint only, without AWS access. The app workflow calls it after building and
 pushing an image on `main`, passing the image digest as the initial task image.
-The called workflow runs checks, plans, applies the saved plan, and returns
-deployment outputs. Any failure prevents the app deploy job from starting.
+The called workflow runs in separate jobs:
+
+1. `lint`: formatting, validation and TFLint.
+2. `plan`: creates the state bucket if missing (composite action
+   `.github/actions/ensure-state-bucket`), runs `terraform plan`, writes the
+   plan to the job summary for review, and uploads it as an artifact.
+3. `approve`: waits for a reviewer on the `menteeTest-approval` environment.
+4. `apply`: applies exactly the approved plan file and returns deployment
+   outputs. Terraform rejects the plan as stale if state changed meanwhile.
+
+Any failure or rejected approval prevents the app deploy job from starting.
+
+Create the **`menteeTest-approval`** environment under **Settings >
+Environments** and add **Required reviewers**. It holds no secrets or
+variables and has no AWS access; it only gates the apply. Without required
+reviewers the apply runs without waiting. Do not add required reviewers to
+`menteeTest` itself, or the plan and deploy jobs would wait too. The AWS role
+trusts only `menteeTest`, so the gate needs its own environment.
 Protect `main` with required PR reviews and checks if changes must go through
 merges; direct main pushes and manual app runs on `main` also apply Terraform.
 Plan and apply run only through the app pipeline on `main`.

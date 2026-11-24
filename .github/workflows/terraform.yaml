@@ -117,18 +117,31 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Manual gate: the run pauses here until a required reviewer of the
-  # menteeTest-approval environment clicks "Review deployments" > Approve.
-  # Required reviewers can only be set in Settings > Environments, not in YAML.
-  # Waiting does not count toward timeout-minutes (GitHub waits up to 30 days).
+  # Manual gate enforced in the workflow itself (no repository settings needed).
+  # It opens an issue and waits until the repository owner comments "approve"
+  # (apply continues) or "deny" (the run fails and nothing is applied). This job
+  # has no AWS access. If nobody answers within the timeout, apply is skipped.
   approve:
     needs: plan
     runs-on: ubuntu-latest
-    environment: menteeTest-approval
-    timeout-minutes: 5
+    timeout-minutes: 120
+    permissions:
+      issues: write
     steps:
-      - name: Plan approved
-        run: echo "Plan approved by a reviewer; continuing to apply."
+      - name: Wait for approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ github.repository_owner }}
+          minimum-approvals: 1
+          issue-title: 'Approve Terraform apply (run ${{ github.run_number }})'
+          issue-body: >-
+            Review the Terraform plan in the run summary:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Image: `${{ inputs.image_uri }}`
+
+            Comment **approve** to apply or **deny** to cancel.
 
   apply:
     needs: approve

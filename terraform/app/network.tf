@@ -9,6 +9,11 @@ resource "aws_vpc" "app" {
   tags                 = { Name = var.name }
 }
 
+# Remove all rules from the VPC's default security group so nothing can use it.
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.app.id
+}
+
 resource "aws_internet_gateway" "app" {
   vpc_id = aws_vpc.app.id
 }
@@ -18,7 +23,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.app.id
   cidr_block              = cidrsubnet(aws_vpc.app.cidr_block, 8, count.index)
   availability_zone       = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false # tasks get public IPs from the ECS service only
   tags                    = { Name = "${var.name}-public-${count.index + 1}" }
 }
 
@@ -67,11 +72,12 @@ resource "aws_security_group" "app" {
     security_groups = [aws_security_group.alb.id]
   }
 
-  # Public IPs provide image pulls from GHCR without a NAT Gateway.
+  # HTTPS only: public IPs provide image pulls from GHCR without a NAT Gateway.
+  # DNS to the VPC resolver is not filtered by security groups.
   egress {
-    protocol    = "-1"
-    from_port   = 0
-    to_port     = 0
+    protocol    = "tcp"
+    from_port   = 443
+    to_port     = 443
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
@@ -82,6 +88,10 @@ resource "aws_lb" "app" {
   internal           = false
   subnets            = aws_subnet.public[*].id
   security_groups    = [aws_security_group.alb.id]
+
+  # Reject malformed headers and requests that could enable request smuggling.
+  drop_invalid_header_fields = true
+  desync_mitigation_mode     = "strictest"
 }
 
 resource "aws_lb_target_group" "app" {

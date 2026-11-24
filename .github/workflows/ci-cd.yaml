@@ -86,6 +86,10 @@ jobs:
           if [ -n "$digest" ]; then
             echo "Image $IMAGE:$IMAGE_TAG already published; reusing $digest."
             echo "digest=$digest" >> "$GITHUB_OUTPUT"
+            baked=$(docker buildx imagetools inspect "$IMAGE:$IMAGE_TAG" --format '{{json .Image}}'               | jq -r '[.. | objects | .config?.Env? // empty | .[] | select(startswith("APP_VERSION="))][0] // "" | sub("^APP_VERSION="; "")')
+            if [ "$baked" != "$IMAGE_TAG" ]; then
+              echo "::warning::Reused image $IMAGE:$IMAGE_TAG was built from older code (APP_VERSION='${baked:-unset}'). Bump APP_VERSION to rebuild from the current commit."
+            fi
           fi
       - uses: docker/setup-buildx-action@v3
       - name: Build image
@@ -140,6 +144,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: write # approval gate opens an issue and waits for "approve"
     uses: ./.github/workflows/terraform.yaml
     with:
       image_uri: ${{ needs.build.outputs.image }}
@@ -192,6 +197,9 @@ jobs:
           task-definition: task-definition.json
           container-name: ${{ env.ECS_CONTAINER_NAME }}
           image: ${{ needs.build.outputs.image }}
+          # Set the version on the task itself so the API always reports the
+          # APP_VERSION variable, even for images built before it was baked in.
+          environment-variables: APP_VERSION=${{ vars.APP_VERSION }}
       - name: Deploy
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:

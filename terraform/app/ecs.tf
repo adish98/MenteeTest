@@ -18,14 +18,29 @@ resource "aws_ecs_task_definition" "app" {
     cpu_architecture        = "X86_64"
   }
 
+  # Hardened container: non-root user, read-only root filesystem, all Linux
+  # capabilities dropped, and an init process to reap zombie processes.
   container_definitions = jsonencode([{
-    name      = var.name
-    image     = var.image_uri
-    essential = true
+    name                   = var.name
+    image                  = var.image_uri
+    essential              = true
+    user                   = "10001:10001"
+    readonlyRootFilesystem = true
     portMappings = [{
       containerPort = 8080
       protocol      = "tcp"
     }]
+    environment = [{
+      name  = "PYTHONDONTWRITEBYTECODE"
+      value = "1"
+    }]
+    linuxParameters = {
+      initProcessEnabled = true
+      capabilities = {
+        add  = []
+        drop = ["ALL"]
+      }
+    }
   }])
 }
 
@@ -34,6 +49,9 @@ resource "aws_ecs_service" "app" {
   cluster                            = aws_ecs_cluster.app.id
   task_definition                    = aws_ecs_task_definition.app.arn
   launch_type                        = "FARGATE"
+  platform_version                   = "LATEST"
+  enable_execute_command             = false
+  propagate_tags                     = "SERVICE"
   desired_count                      = 1
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200

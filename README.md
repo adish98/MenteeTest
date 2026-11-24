@@ -37,5 +37,19 @@ Setup (**Settings > Environments**):
 
 - `menteeTest`: variables `AWS_REGION`, `APP_VERSION`, `TF_STATE_BUCKET`, and
   optionally `TF_APP_NAME`.
-- `menteeTest-approval`: add yourself under **Required reviewers**. Runs pause
-  before `apply` until you click **Review deployments > Approve**.
+
+**Approving Terraform:** after `plan`, the run opens an issue titled
+*Approve Terraform apply* and waits for the repository owner. Read the plan in
+the run summary, then comment **approve** to apply or **deny** to cancel. With
+no answer within 2 hours, the run stops without applying.
+
+## Security
+
+- **State bucket (S3):** public access blocked, ACLs disabled, versioning,
+  AES256 encryption, HTTPS/TLS 1.2+ only, and old versions expire after
+  90 days. CI re-applies these settings on every run.
+- **ECS tasks:** non-root user, read-only root filesystem, all Linux capabilities dropped, and ECS Exec disabled.
+- **Network:** tasks accept traffic only from the ALB on port 8080 and can
+  send only HTTPS out. The VPC's default security group has no rules. The ALB
+  drops invalid headers and uses the strictest request-smuggling (desync)
+  protection.

@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      bump:
+        description: Version bump. "auto" reuses this commit's version tag if it has one, otherwise bumps patch.
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
       terraform:
         description: Run Terraform (plan, manual approval, apply) before deploying. Uncheck to deploy only the new image.
         type: boolean
@@ -37,15 +42,85 @@ jobs:
       - name: Run unit tests
         run: pytest -v
 
+  # Semantic versioning. The release version is the latest vX.Y.Z git tag (or
+  # the APP_VERSION variable, if higher) bumped by the merged PR's label
+  # (major / minor / patch) or a #major / #minor / #patch marker in the commit
+  # message; patch by default. PRs only preview the version they would release.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The environment provides the APP_VERSION variable.
+    environment: ${{ github.event_name != 'pull_request' && 'menteeTest' || '' }}
+    permissions:
+      contents: read
+      pull-requests: read # find the merged PR's labels
+      issues: write # create the major / minor / patch labels
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      bump: ${{ steps.next.outputs.bump }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Ensure bump labels exist
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          create() {
+            gh label create "$1" --repo "$GITHUB_REPOSITORY" --color "$2" --description "$3" --force \
+              || echo "::warning::Could not create the '$1' label."
+          }
+          create major b60205 'Release: bump the major version (breaking change)'
+          create minor fbca04 'Release: bump the minor version (new feature)'
+          create patch 0e8a16 'Release: bump the patch version (fix; the default)'
+      - name: Determine version
+        id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump || 'auto' }}
+          # Re-runs of a release reuse the version already tagged on this commit.
+          REUSE_HEAD_TAG: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.bump == 'auto') }}
+          BASE_VERSION: ${{ vars.APP_VERSION }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = pull_request ]; then
+            LABELS=$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH")
+            MESSAGE=$(jq -r '.pull_request.title + "\n" + (.pull_request.body // "")' "$GITHUB_EVENT_PATH")
+          else
+            if ! LABELS=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[].labels[].name'); then
+              echo "::warning::Could not read PR labels; using the commit message only."
+              LABELS=
+            fi
+            MESSAGE=$(git log -1 --format=%B)
+          fi
+          export LABELS MESSAGE
+          bash .github/scripts/next-version.sh
+      - name: Summary
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+          PREVIOUS: ${{ steps.next.outputs.previous }}
+          BUMP_KIND: ${{ steps.next.outputs.bump }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = pull_request ]; then
+            echo "### Merging this PR releases **$VERSION** ($BUMP_KIND from $PREVIOUS)" >> "$GITHUB_STEP_SUMMARY"
+            echo 'Add a **major**, **minor** or **patch** label to change the bump.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Releasing **$VERSION** ($BUMP_KIND from $PREVIOUS)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   build:
-    needs: test
+    needs: [test, version]
     runs-on: ubuntu-latest
     environment: ${{ github.event_name != 'pull_request' && 'menteeTest' || '' }}
     env:
-      IMAGE_TAG: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || vars.APP_VERSION }}
-      BUILD_VERSION: ${{ github.event_name == 'pull_request' && '0.0.0' || vars.APP_VERSION }}
+      IMAGE_TAG: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || needs.version.outputs.version }}
+      BUILD_VERSION: ${{ github.event_name == 'pull_request' && '0.0.0' || needs.version.outputs.version }}
     permissions:
-      contents: read
+      contents: write # push the vX.Y.Z release tag
       packages: write
     outputs:
       # Deployed by version tag so ECS, Terraform and GHCR all show the release.
@@ -58,7 +133,7 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$IMAGE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || (( ${#IMAGE_TAG} > 128 )); then
-            echo '::error::Set APP_VERSION in the menteeTest environment to a Docker-compatible version such as 1.2.3 or 1.2.3-rc.1.'
+            echo "::error::Invalid release version '$IMAGE_TAG' from the version job."
             exit 1
           fi
       # GHCR image names must be lowercase. The package must be public so that
@@ -75,6 +150,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # A version is built once. On a re-run its image is reused, but only if it
+      # was built from this same commit.
       - name: Reuse release on retry
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: existing
@@ -84,12 +161,14 @@ jobs:
           digest=$(docker buildx imagetools inspect "$IMAGE:$IMAGE_TAG" \
             --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty' || true)
           if [ -n "$digest" ]; then
-            echo "Image $IMAGE:$IMAGE_TAG already published; reusing $digest."
-            echo "digest=$digest" >> "$GITHUB_OUTPUT"
-            baked=$(docker buildx imagetools inspect "$IMAGE:$IMAGE_TAG" --format '{{json .Image}}'               | jq -r '[.. | objects | .config?.Env? // empty | .[] | select(startswith("APP_VERSION="))][0] // "" | sub("^APP_VERSION="; "")')
-            if [ "$baked" != "$IMAGE_TAG" ]; then
-              echo "::warning::Reused image $IMAGE:$IMAGE_TAG was built from older code (APP_VERSION='${baked:-unset}'). Bump APP_VERSION to rebuild from the current commit."
+            revision=$(docker buildx imagetools inspect "$IMAGE:$IMAGE_TAG" --format '{{json .Image}}' \
+              | jq -r '[.. | objects | select(has("config")) | .config.Labels["org.opencontainers.image.revision"]? // empty] | first // ""')
+            if [ "$revision" != "$GITHUB_SHA" ]; then
+              echo "::error::$IMAGE:$IMAGE_TAG is already published from commit '${revision:-unknown}'. Run again with a bump of patch, minor or major."
+              exit 1
             fi
+            echo "Image $IMAGE:$IMAGE_TAG already published from this commit; reusing $digest."
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
           fi
       - uses: docker/setup-buildx-action@v3
       - name: Build image
@@ -128,6 +207,14 @@ jobs:
           curl -fsS http://localhost:8080/health | jq -e '.status == "ok"'
           curl -fsS http://localhost:8080/ | jq -e --arg v "$BUILD_VERSION" \
             '.message == "Hello World" and .version == $v'
+      # Tag after the smoke test, before publishing: the version is consumed
+      # only by a commit that passed, and a re-run finds the tag and reuses it.
+      # Re-pushing the same tag is a no-op; a tag on another commit is rejected.
+      - name: Tag release commit
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          git tag "v$IMAGE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/v$IMAGE_TAG"
       - name: Push image
         if: steps.existing.outputs.digest == '' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
@@ -152,7 +239,7 @@ jobs:
   # Depends on build. Terraform must succeed when it runs; when it is skipped
   # the deploy uses the existing infrastructure.
   deploy:
-    needs: [build, terraform]
+    needs: [version, build, terraform]
     if: >-
       !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
       needs.build.result == 'success' &&
@@ -171,6 +258,7 @@ jobs:
       ECS_TASK_DEFINITION: ${{ needs.terraform.outputs.task_definition || vars.TF_APP_NAME || 'exam-adi-shmul' }}
       ECS_CONTAINER_NAME: ${{ needs.terraform.outputs.container_name || vars.TF_APP_NAME || 'exam-adi-shmul' }}
       APP_URL: ${{ needs.terraform.outputs.app_url }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - name: Connect to AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -197,9 +285,8 @@ jobs:
           task-definition: task-definition.json
           container-name: ${{ env.ECS_CONTAINER_NAME }}
           image: ${{ needs.build.outputs.image }}
-          # Set the version on the task itself so the API always reports the
-          # APP_VERSION variable, even for images built before it was baked in.
-          environment-variables: APP_VERSION=${{ vars.APP_VERSION }}
+          # Also set on the task so the API always reports the released version.
+          environment-variables: APP_VERSION=${{ needs.version.outputs.version }}
       - name: Deploy
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
@@ -211,3 +298,32 @@ jobs:
         run: |
           curl --fail --silent --show-error --max-time 30 "${APP_URL%/}/health" \
             | jq -e '.status == "ok"'
+          # Old tasks may still be draining from the ALB; allow up to a minute.
+          for attempt in $(seq 1 12); do
+            served=$(curl --fail --silent --max-time 10 "${APP_URL%/}/" | jq -r '.version' || true)
+            [ "$served" = "$VERSION" ] && break
+            echo "Attempt $attempt: serving '${served:-nothing}', waiting for $VERSION..."
+            sleep 5
+          done
+          if [ "$served" != "$VERSION" ]; then
+            echo "::error::$APP_URL serves version '${served:-nothing}', expected $VERSION."
+            exit 1
+          fi
+          echo "### Released **$VERSION** at $APP_URL" >> "$GITHUB_STEP_SUMMARY"
+      # Keeps the APP_VERSION variable in step with the release. GITHUB_TOKEN
+      # cannot write variables, so this needs the APP_VERSION_TOKEN secret.
+      # The git tag remains the source of truth, so a failure here only warns.
+      - name: Update APP_VERSION variable
+        env:
+          GH_TOKEN: ${{ secrets.APP_VERSION_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::APP_VERSION_TOKEN secret is not set, so the APP_VERSION variable was not updated to $VERSION."
+            exit 0
+          fi
+          if gh api --method PATCH "repos/$GITHUB_REPOSITORY/environments/menteeTest/variables/APP_VERSION" \
+            -f name=APP_VERSION -f value="$VERSION" > /dev/null; then
+            echo "APP_VERSION variable set to $VERSION."
+          else
+            echo "::warning::Could not update the APP_VERSION variable; check the APP_VERSION_TOKEN permissions."
+          fi

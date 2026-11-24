@@ -1,0 +1,140 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
+
+# Prevent overlapping production releases.
+concurrency:
+  group: ci-cd-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  build-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build PR image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          pull: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: menteeTest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.login.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Connect to AWS
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: login
+      - name: Reuse release on retry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: existing
+        env:
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          digest=$(aws ecr list-images --repository-name "$ECR_REPOSITORY" \
+            --query "imageIds[?imageTag=='$IMAGE_TAG'].imageDigest | [0]" --output text)
+          if [ "$digest" != None ]; then
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        if: steps.existing.outputs.digest == ''
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.login.outputs.registry || 'local' }}/${{ vars.ECR_REPOSITORY || 'exam-adi-shmul' }}:${{ env.IMAGE_TAG }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          pull: true
+          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  terraform:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform.yaml
+    with:
+      image_uri: ${{ needs.build.outputs.image }}
+
+  deploy:
+    needs: [build, terraform]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: menteeTest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ECS_CLUSTER: ${{ needs.terraform.outputs.ecs_cluster }}
+      ECS_SERVICE: ${{ needs.terraform.outputs.ecs_service }}
+      ECS_TASK_DEFINITION: ${{ needs.terraform.outputs.task_definition }}
+      ECS_CONTAINER_NAME: ${{ needs.terraform.outputs.container_name }}
+      APP_URL: ${{ needs.terraform.outputs.app_url }}
+    steps:
+      - name: Connect to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Download task definition and enable rollback
+        run: |
+          aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" \
+            --query taskDefinition > task-definition.json
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --deployment-configuration 'minimumHealthyPercent=100,maximumPercent=200,deploymentCircuitBreaker={enable=true,rollback=true}' \
+            > /dev/null
+      - name: Set container image
+        id: task
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image }}
+      - name: Deploy
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+      - name: Verify health
+        run: |
+          curl --fail --silent --show-error --max-time 30 "${APP_URL%/}/health" \
+            | jq -e '.status == "ok"'

@@ -45,7 +45,7 @@ Omit `-e APP_VERSION=1.2.3` to use the default version `0.0.0`.
 ## GitHub Actions deployment
 
 Pull requests to `main` build the image. Pushes to `main` and manual runs on
-`main` build and push directly to ECR, call Terraform, then deploy only after
+`main` build and push to GitHub Container Registry (GHCR), call Terraform, then deploy only after
 Terraform checks, plan, apply, and variable publication succeed.
 The deploy job reads cluster, service, task family, container name, and URL
 directly from the called Terraform workflow's outputs.
@@ -54,16 +54,18 @@ Images use the `APP_VERSION` GitHub environment variable as their tag (for
 example, `1.2.3`). The same value is baked into the container's `APP_VERSION`
 environment variable, which the API returns. Set a new version before each
 release; an existing version tag reuses its published image, including on
-manual runs and retries. Published versions are immutable.
-AWS authentication uses OIDC. No version-management token is required.
+manual runs and retries. Do not overwrite published version tags.
+Images are pushed to `ghcr.io/<owner>/<repo>` (lowercase) using the workflow's
+`GITHUB_TOKEN`. After the first push, set the package visibility to **Public**
+(**Packages > package settings > Change visibility**) so Fargate can pull it
+without credentials. AWS authentication uses OIDC.
 
 Set these variables under **Settings > Environments > menteeTest > Environment variables**:
 
 | Variable | Value |
 | --- | --- |
-| `AWS_REGION` | AWS region containing ECR and ECS |
+| `AWS_REGION` | AWS region containing ECS |
 | `APP_VERSION` | Application and image version, for example `1.2.3` |
-| `ECR_REPOSITORY` | Existing ECR repository name, with tag immutability set to `IMMUTABLE` |
 | `ECS_CLUSTER` | Automatically published from Terraform |
 | `ECS_SERVICE` | Automatically published from Terraform |
 | `ECS_TASK_DEFINITION` | Automatically published task definition family |
@@ -71,7 +73,7 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | `APP_URL` | Automatically published application URL |
 
 The task definition must support Linux AMD64 and expose container port 8080.
-The workflow registers a revision, deploys the ECR digest, waits for service
+The workflow registers a revision, deploys the GHCR digest, waits for service
 stability, then checks `/health`. It enables ECS rolling
 deployment with automatic rollback and keeps the existing tasks healthy while
 starting replacements (100% minimum healthy, 200% maximum). The service must
@@ -81,10 +83,10 @@ Rollback requires an earlier successfully completed deployment. This is a rollin
 update, not an atomic blue/green traffic switch.
 
 Configure the IAM role's OIDC trust for the `menteeTest` environment with
-audience `sts.amazonaws.com`. Give it ECR read/push permissions, ECS task
-definition read/register and service read/update permissions, and `iam:PassRole`
-for the task and execution roles. The ECS execution role must be able to pull
-from ECR. ECR and OIDC roles must already exist. The state bucket is created
+audience `sts.amazonaws.com`. Give it ECS task definition read/register and
+service read/update permissions. No ECS task execution role is used (see
+`IAM-ISSUE.md`), so `iam:PassRole` is not required. The OIDC role must already
+exist. The state bucket is created
 automatically if missing. The app
 workflow calls Terraform to provision application resources before deployment.
 Production pipelines run one at a time.
@@ -131,12 +133,13 @@ the created bucket. Commit the generated bootstrap
 `.terraform.lock.hcl` when initializing with your chosen provider version.
 
 Terraform in `terraform/app` creates the VPC, two public subnets, Internet
-Gateway, HTTP ALB, ECS cluster and Fargate service, CloudWatch logs, and (unless
-an existing one is supplied) the ECS task execution role in `eu-west-2`. ECR and
-GitHub authentication are managed separately.
+Gateway, HTTP ALB, and ECS cluster and Fargate service in `eu-west-2`. It creates
+no IAM resources: the exam permissions boundary blocks all IAM writes, so tasks
+run without an execution role. They therefore pull a public image and do not
+send container logs to CloudWatch. GitHub authentication is managed separately.
 
 Requires Terraform 1.10+ and AWS credentials with provisioning permissions.
-Push the initial Linux AMD64 image to an existing ECR repository first.
+Push the initial Linux AMD64 image to a public GHCR package first.
 From the repository root (PowerShell):
 
 ```powershell
@@ -159,15 +162,16 @@ Invoke-RestMethod "$applicationUrl/health"
 
 The service runs one task with 256 CPU units and 512 MB RAM. Tasks use public
 IPs for outbound access without a NAT Gateway. Only the ALB can reach task port
-8080; the ALB accepts public HTTP on port 80. Logs are retained for seven days.
+8080; the ALB accepts public HTTP on port 80. Container logs are not collected;
+use ECS service events and ALB health checks for troubleshooting.
 ECS deployment circuit breaker and automatic rollback are enabled. Rollback
 requires a previous healthy deployment.
 
 For the existing workflow, set `AWS_REGION=eu-west-2`. Terraform returns
 `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION` (the family),
 `ECS_CONTAINER_NAME`, and `APP_URL` to the deploy job and publishes them as
-repository variables. Configure `ECR_REPOSITORY` and
-`AWS_ROLE_ARN` using your separately managed ECR repository and GitHub OIDC role.
+repository variables. Configure `AWS_ROLE_ARN` using your separately managed
+GitHub OIDC role.
 Terraform ignores service task definition revisions changed by CI/CD.
 Changes to Terraform task settings require a subsequent service deployment.
 
@@ -181,8 +185,7 @@ To remove the app, stop CI/CD runs and execute:
 terraform -chdir=terraform/app destroy
 ```
 
-This removes app resources and logs. Separately managed ECR images and GitHub
-roles are retained. CI/CD-created task definition revisions are outside
+This removes app resources. GHCR images and GitHub roles are retained. CI/CD-created task definition revisions are outside
 Terraform state; deregister any remaining revisions separately if desired.
 
 ## Terraform CI/CD
@@ -204,17 +207,12 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
 | `TF_STATE_BUCKET` | S3 state bucket name; created automatically if missing |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
-| `ECS_EXECUTION_ROLE_ARN` | Optional existing ECS task execution role ARN; leave unset to let Terraform create one |
 
 The Terraform apply role is separate from the application deployment role.
 Configure its OIDC trust subject as `repo:OWNER/REPO:environment:menteeTest` with
 audience `sts.amazonaws.com`. A PR plan role is no longer needed.
-The apply role needs VPC/EC2, ELB, ECS, and CloudWatch Logs provisioning
-permissions, plus `iam:PassRole` for the ECS execution role. By default Terraform
-creates `<name>-execution` with the `candidate-exam-boundary` permissions boundary
-(required by the exam IAM policy for `iam:CreateRole`). To use an existing role
-instead, set `ECS_EXECUTION_ROLE_ARN` to a role that trusts
-`ecs-tasks.amazonaws.com` and has `AmazonECSTaskExecutionRolePolicy` attached.
+The apply role needs VPC/EC2, ELB, and ECS provisioning permissions. No IAM
+permissions are needed because Terraform creates no IAM resources.
 
 The apply role needs `s3:ListBucket` on the state bucket, `s3:GetObject` on
 `exam-adi-shmul/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and

@@ -45,7 +45,10 @@ Omit `-e APP_VERSION=1.2.3` to use the default version `0.0.0`.
 ## GitHub Actions deployment
 
 Pull requests to `main` build the image. Pushes to `main` and manual runs on
-`main` build and push directly to ECR, then deploy in a separate job.
+`main` build and push directly to ECR, call Terraform, then deploy only after
+Terraform checks, plan, apply, and variable publication succeed.
+The deploy job reads cluster, service, task family, container name, and URL
+directly from the called Terraform workflow's outputs.
 Tests can be run locally using the command above.
 Images use `<commit-sha>-<run_number>` tags. Retries reuse the same image;
 new manual runs produce a new tag and rebuild without cached layers.
@@ -58,11 +61,11 @@ Set these GitHub repository variables:
 | `AWS_REGION` | AWS region containing ECR and ECS |
 | `AWS_ROLE_ARN` | IAM role assumed through GitHub OIDC |
 | `ECR_REPOSITORY` | Existing ECR repository name, with tag immutability set to `IMMUTABLE` |
-| `ECS_CLUSTER` | Existing ECS cluster name |
-| `ECS_SERVICE` | Existing Fargate service name |
-| `ECS_TASK_DEFINITION` | Existing task definition family or revision ARN |
-| `ECS_CONTAINER_NAME` | Application container name in the task definition |
-| `APP_URL` | Running application's base URL, reachable from the GitHub runner |
+| `ECS_CLUSTER` | Automatically published from Terraform |
+| `ECS_SERVICE` | Automatically published from Terraform |
+| `ECS_TASK_DEFINITION` | Automatically published task definition family |
+| `ECS_CONTAINER_NAME` | Automatically published from Terraform |
+| `APP_URL` | Automatically published application URL |
 
 The task definition must support Linux AMD64 and expose container port 8080.
 The workflow registers a revision, deploys the ECR digest, waits for service
@@ -78,8 +81,9 @@ Configure the IAM role's OIDC trust for this repository's `main` branch with
 audience `sts.amazonaws.com`. Give it ECR read/push permissions, ECS task
 definition read/register and service read/update permissions, and `iam:PassRole`
 for the task and execution roles. The ECS execution role must be able to pull
-from ECR. Infrastructure and IAM resources must already exist; the workflow
-does not provision them. Production deployments run one at a time.
+from ECR. ECR, the state bucket, and OIDC roles must already exist. The app
+workflow calls Terraform to provision application resources before deployment.
+Production pipelines run one at a time.
 
 ## Terraform application infrastructure
 
@@ -115,9 +119,10 @@ IPs for outbound access without a NAT Gateway. Only the ALB can reach task port
 ECS deployment circuit breaker and automatic rollback are enabled. Rollback
 requires a previous healthy deployment.
 
-For the existing workflow, set `AWS_REGION=eu-west-2`; use the outputs for
-`ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION` (use the family),
-`ECS_CONTAINER_NAME`, and `APP_URL`. Configure `ECR_REPOSITORY` and
+For the existing workflow, set `AWS_REGION=eu-west-2`. Terraform returns
+`ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION` (the family),
+`ECS_CONTAINER_NAME`, and `APP_URL` to the deploy job and publishes them as
+repository variables. Configure `ECR_REPOSITORY` and
 `AWS_ROLE_ARN` using your separately managed ECR repository and GitHub OIDC role.
 Terraform ignores service task definition revisions changed by CI/CD.
 Changes to Terraform task settings require a subsequent service deployment.
@@ -138,11 +143,14 @@ Terraform state; deregister any remaining revisions separately if desired.
 
 ## Terraform CI/CD
 
-`.github/workflows/terraform.yaml` runs when app Terraform files or the workflow
-change. PRs run formatting, validation, TFLint, and an AWS-backed plan. Pushes to
-`main` run the same checks and apply the saved plan only after they succeed.
-There is no manual apply trigger. Protect `main` with required PR reviews and
-checks if all main changes must go through merges; direct main pushes also apply.
+`.github/workflows/terraform.yaml` is reusable and also checks PRs when app
+Terraform files or the Terraform workflow change. PRs run formatting, validation,
+TFLint, and an AWS-backed plan. The app workflow calls it after building and
+pushing an image on `main`, passing the image digest as the initial task image.
+The called workflow runs checks, plans, applies the saved plan, and returns
+deployment outputs. Any failure prevents the app deploy job from starting.
+Protect `main` with required PR reviews and checks if changes must go through
+merges; direct main pushes and manual app runs on `main` also apply Terraform.
 Fork PRs run lint checks only and receive no AWS credentials.
 
 Set these repository Actions variables:
@@ -154,7 +162,7 @@ Set these repository Actions variables:
 | `TF_STATE_REGION` | AWS region of the state bucket |
 | `TF_PLAN_ROLE_ARN` | OIDC role for PR plans with infrastructure read permissions |
 | `TF_APPLY_ROLE_ARN` | OIDC role with permissions to provision app resources |
-| `TF_IMAGE_URI` | Existing Linux AMD64 app image URI, preferably with a digest |
+| `TF_IMAGE_URI` | Existing image URI for standalone PR plans; app runs pass their built image |
 | `TF_APP_NAME` | Optional app name; defaults to `hello-world` |
 
 The roles are separate from the application deployment role. Configure the PR
@@ -185,4 +193,17 @@ plan/apply/destroy commands must use this same backend.
 
 The workflow serializes Terraform operations and uses S3 state locks. It
 recalculates the plan after merge and applies that exact plan in the same job.
-The separate application image workflow continues to own ECS image deployments.
+The application deploy job then updates the ECS service with the built image.
+
+After a successful apply on `main`, Terraform CI automatically creates or updates
+`ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION`, `ECS_CONTAINER_NAME`, and
+`APP_URL` repository variables from the Terraform outputs.
+
+Add the repository **secret** `TF_VARIABLES_TOKEN`: a fine-grained GitHub token
+restricted to this repository with **Variables: read and write** permission.
+The default `GITHUB_TOKEN` does not provide this permission. The publishing step
+uses this token only after apply on `main`; PR runs do not publish variables.
+
+The current app deployment uses the reusable workflow outputs immediately;
+it does not depend on GitHub refreshing repository variables mid-run. Published
+repository variables are also available to subsequent workflows.

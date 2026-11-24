@@ -93,7 +93,7 @@ jobs:
       - name: Connect to AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.TF_APPLY_ROLE_ARN }}
+          role-to-assume: arn:aws:iam::030454160336:role/exam-adi-shmul
           aws-region: ${{ vars.AWS_REGION }}
           retry-max-attempts: 3
       - name: Initialize remote state

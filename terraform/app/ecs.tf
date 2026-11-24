@@ -27,13 +27,13 @@ resource "aws_ecs_task_definition" "app" {
     user                   = "10001:10001"
     readonlyRootFilesystem = true
     portMappings = [{
-      containerPort = 8080
+      containerPort = var.container_port
       protocol      = "tcp"
     }]
-    environment = [{
-      name  = "PYTHONDONTWRITEBYTECODE"
-      value = "1"
-    }]
+    environment = [
+      { name = "PYTHONDONTWRITEBYTECODE", value = "1" },
+      { name = "PORT", value = tostring(var.container_port) },
+    ]
     linuxParameters = {
       initProcessEnabled = true
       capabilities = {
@@ -72,7 +72,7 @@ resource "aws_ecs_service" "app" {
   load_balancer {
     target_group_arn = aws_lb_target_group.app.arn
     container_name   = var.name
-    container_port   = 8080
+    container_port   = var.container_port
   }
 
   lifecycle {

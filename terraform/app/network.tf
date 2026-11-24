@@ -55,8 +55,8 @@ resource "aws_security_group" "alb" {
 
   egress {
     protocol    = "tcp"
-    from_port   = 8080
-    to_port     = 8080
+    from_port   = var.container_port
+    to_port     = var.container_port
     cidr_blocks = [aws_vpc.app.cidr_block]
   }
 }
@@ -67,8 +67,8 @@ resource "aws_security_group" "app" {
 
   ingress {
     protocol        = "tcp"
-    from_port       = 8080
-    to_port         = 8080
+    from_port       = var.container_port
+    to_port         = var.container_port
     security_groups = [aws_security_group.alb.id]
   }
 
@@ -98,7 +98,7 @@ resource "aws_lb_target_group" "app" {
   name        = var.name
   vpc_id      = aws_vpc.app.id
   protocol    = "HTTP"
-  port        = 8080
+  port        = var.container_port
   target_type = "ip"
 
   health_check {

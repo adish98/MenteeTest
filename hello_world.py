@@ -62,5 +62,6 @@ def health():
 
 
 if __name__ == "__main__":
-    logger.info("Starting Hello World %s on 0.0.0.0:8080", app_version())
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", "8080"))
+    logger.info("Starting Hello World %s on 0.0.0.0:%d", app_version(), port)
+    app.run(host="0.0.0.0", port=port)

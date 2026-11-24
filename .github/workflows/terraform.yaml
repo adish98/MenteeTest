@@ -86,7 +86,7 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
       TF_VAR_image_uri: ${{ inputs.image_uri || vars.TF_IMAGE_URI }}
-      TF_VAR_name: ${{ vars.TF_APP_NAME || 'hello-world' }}
+      TF_VAR_name: ${{ vars.TF_APP_NAME || 'exam-adi-shmul' }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3

@@ -34,8 +34,8 @@ python -m unittest discover -v
 Build and run with Docker:
 
 ```sh
-docker build -t hello-world .
-docker run --rm -p 8080:8080 -e APP_VERSION=1.2.3 hello-world
+docker build -t exam-adi-shmul .
+docker run --rm -p 8080:8080 -e APP_VERSION=1.2.3 exam-adi-shmul
 ```
 
 The container uses Python slim and runs `python hello_world.py` as a non-root user.
@@ -163,7 +163,7 @@ Set these repository Actions variables:
 | `TF_PLAN_ROLE_ARN` | OIDC role for PR plans with infrastructure read permissions |
 | `TF_APPLY_ROLE_ARN` | OIDC role with permissions to provision app resources |
 | `TF_IMAGE_URI` | Existing image URI for standalone PR plans; app runs pass their built image |
-| `TF_APP_NAME` | Optional app name; defaults to `hello-world` |
+| `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
 
 The roles are separate from the application deployment role. Configure the PR
 role's OIDC trust subject as `repo:OWNER/REPO:pull_request`, and the apply role's
@@ -174,8 +174,8 @@ The apply role needs VPC/EC2, ELB, ECS, CloudWatch Logs, and task execution IAM
 role provisioning permissions, including `iam:PassRole` for that execution role.
 
 Both roles need `s3:ListBucket` on the state bucket, `s3:GetObject` on
-`hello-world/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and
-`s3:DeleteObject` on `hello-world/app/terraform.tfstate.tflock`. The apply role
+`exam-adi-shmul/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and
+`s3:DeleteObject` on `exam-adi-shmul/app/terraform.tfstate.tflock`. The apply role
 also needs `s3:PutObject` on the state object. Add KMS access if the bucket uses
 a customer-managed KMS key. The bucket and OIDC roles are managed separately.
 

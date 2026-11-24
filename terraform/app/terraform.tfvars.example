@@ -1,2 +1,2 @@
-name      = "hello-world"
-image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/hello-world:bootstrap"
+name      = "exam-adi-shmul"
+image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/exam-adi-shmul:bootstrap"

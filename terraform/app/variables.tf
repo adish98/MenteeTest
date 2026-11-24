@@ -1,7 +1,7 @@
 variable "name" {
   description = "Application resource and container name."
   type        = string
-  default     = "hello-world"
+  default     = "exam-adi-shmul"
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{0,19}$", var.name))

@@ -54,7 +54,7 @@ Images use `<commit-sha>-<run_number>` tags. Retries reuse the same image;
 new manual runs produce a new tag and rebuild without cached layers.
 AWS authentication uses OIDC. No version-management token is required.
 
-Set these GitHub repository variables:
+Set these variables under **Settings > Environments > menteeTest > Environment variables**:
 
 | Variable | Value |
 | --- | --- |
@@ -77,7 +77,7 @@ tasks. Configure container or load balancer health checks against `/health`.
 Rollback requires an earlier successfully completed deployment. This is a rolling
 update, not an atomic blue/green traffic switch.
 
-Configure the IAM role's OIDC trust for this repository's `main` branch with
+Configure the IAM role's OIDC trust for the `menteeTest` environment with
 audience `sts.amazonaws.com`. Give it ECR read/push permissions, ECS task
 definition read/register and service read/update permissions, and `iam:PassRole`
 for the task and execution roles. The ECS execution role must be able to pull
@@ -145,35 +145,31 @@ Terraform state; deregister any remaining revisions separately if desired.
 
 `.github/workflows/terraform.yaml` is reusable and also checks PRs when app
 Terraform files or the Terraform workflow change. PRs run formatting, validation,
-TFLint, and an AWS-backed plan. The app workflow calls it after building and
+and TFLint only, without AWS access. The app workflow calls it after building and
 pushing an image on `main`, passing the image digest as the initial task image.
 The called workflow runs checks, plans, applies the saved plan, and returns
 deployment outputs. Any failure prevents the app deploy job from starting.
 Protect `main` with required PR reviews and checks if changes must go through
 merges; direct main pushes and manual app runs on `main` also apply Terraform.
-Fork PRs run lint checks only and receive no AWS credentials.
+Plan and apply run only through the app pipeline on `main`.
 
-Set these repository Actions variables:
+Set these variables under **Settings > Environments > menteeTest > Environment variables**:
 
 | Variable | Value |
 | --- | --- |
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
 | `TF_STATE_BUCKET` | Existing S3 state bucket name |
 | `TF_STATE_REGION` | AWS region of the state bucket |
-| `TF_PLAN_ROLE_ARN` | OIDC role for PR plans with infrastructure read permissions |
 | `TF_APPLY_ROLE_ARN` | OIDC role with permissions to provision app resources |
-| `TF_IMAGE_URI` | Existing image URI for standalone PR plans; app runs pass their built image |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
 
-The roles are separate from the application deployment role. Configure the PR
-role's OIDC trust subject as `repo:OWNER/REPO:pull_request`, and the apply role's
-subject as `repo:OWNER/REPO:ref:refs/heads/main`; both use audience
-`sts.amazonaws.com`. Treat branches in this repository as trusted: PR code runs
-with the plan role. Its infrastructure permissions should only allow reads.
+The Terraform apply role is separate from the application deployment role.
+Configure its OIDC trust subject as `repo:OWNER/REPO:environment:menteeTest` with
+audience `sts.amazonaws.com`. A PR plan role is no longer needed.
 The apply role needs VPC/EC2, ELB, ECS, CloudWatch Logs, and task execution IAM
 role provisioning permissions, including `iam:PassRole` for that execution role.
 
-Both roles need `s3:ListBucket` on the state bucket, `s3:GetObject` on
+The apply role needs `s3:ListBucket` on the state bucket, `s3:GetObject` on
 `exam-adi-shmul/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and
 `s3:DeleteObject` on `exam-adi-shmul/app/terraform.tfstate.tflock`. The apply role
 also needs `s3:PutObject` on the state object. Add KMS access if the bucket uses
@@ -199,7 +195,7 @@ After a successful apply on `main`, Terraform CI automatically creates or update
 `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION`, `ECS_CONTAINER_NAME`, and
 `APP_URL` repository variables from the Terraform outputs.
 
-Add the repository **secret** `TF_VARIABLES_TOKEN`: a fine-grained GitHub token
+Add the **environment secret** `TF_VARIABLES_TOKEN` under **Settings > Environments > menteeTest**: a fine-grained GitHub token
 restricted to this repository with **Variables: read and write** permission.
 The default `GITHUB_TOKEN` does not provide this permission. The publishing step
 uses this token only after apply on `main`; PR runs do not publish variables.
@@ -207,3 +203,12 @@ uses this token only after apply on `main`; PR runs do not publish variables.
 The current app deployment uses the reusable workflow outputs immediately;
 it does not depend on GitHub refreshing repository variables mid-run. Published
 repository variables are also available to subsequent workflows.
+
+The release build, Terraform plan/apply, and ECS deploy jobs use `menteeTest`.
+PR image builds and Terraform lint jobs do not use the environment. Configure
+the environment's deployment branch rules to allow only `main`, and add required
+reviewers if approval is desired. Both AWS OIDC roles must trust the subject
+`repo:adish98/MenteeTest:environment:menteeTest` with audience `sts.amazonaws.com`.
+Environment secrets are read inside the Terraform job rather than passed through
+the reusable workflow caller. Terraform still publishes its outputs as repository
+variables; the current deployment reads those values directly from job outputs.

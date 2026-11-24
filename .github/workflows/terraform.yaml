@@ -12,9 +12,6 @@ on:
         description: Image built by the application workflow
         required: true
         type: string
-    secrets:
-      TF_VARIABLES_TOKEN:
-        required: true
     outputs:
       ecs_cluster:
         value: ${{ jobs.plan-and-apply.outputs.ecs_cluster }}
@@ -63,9 +60,9 @@ jobs:
 
   plan-and-apply:
     needs: lint
-    # Fork pull requests receive no AWS access.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: menteeTest
     timeout-minutes: 40
     permissions:
       contents: read
@@ -85,7 +82,7 @@ jobs:
     env:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
-      TF_VAR_image_uri: ${{ inputs.image_uri || vars.TF_IMAGE_URI }}
+      TF_VAR_image_uri: ${{ inputs.image_uri }}
       TF_VAR_name: ${{ vars.TF_APP_NAME || 'exam-adi-shmul' }}
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +93,7 @@ jobs:
       - name: Connect to AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ github.event_name != 'pull_request' && vars.TF_APPLY_ROLE_ARN || vars.TF_PLAN_ROLE_ARN }}
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - name: Initialize remote state
         run: |

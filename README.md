@@ -79,8 +79,8 @@ update, not an atomic blue/green traffic switch.
 
 Configure the IAM role's OIDC trust for the `menteeTest` environment with
 audience `sts.amazonaws.com`. Give it ECS task definition read/register and
-service read/update permissions. No ECS task execution role is used (see
-`IAM-ISSUE.md`), so `iam:PassRole` is not required. The OIDC role must already
+service read/update permissions. No ECS task execution role is used (the
+permissions boundary blocks IAM role creation), so `iam:PassRole` is not required. The OIDC role must already
 exist. The state bucket is created
 automatically if missing. The app
 workflow calls Terraform to provision application resources before deployment.

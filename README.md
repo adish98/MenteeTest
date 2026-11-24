@@ -66,11 +66,6 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | --- | --- |
 | `AWS_REGION` | AWS region containing ECS |
 | `APP_VERSION` | Application and image version, for example `1.2.3` |
-| `ECS_CLUSTER` | Automatically published from Terraform |
-| `ECS_SERVICE` | Automatically published from Terraform |
-| `ECS_TASK_DEFINITION` | Automatically published task definition family |
-| `ECS_CONTAINER_NAME` | Automatically published from Terraform |
-| `APP_URL` | Automatically published application URL |
 
 The task definition must support Linux AMD64 and expose container port 8080.
 The workflow registers a revision, deploys the GHCR digest, waits for service
@@ -169,8 +164,8 @@ requires a previous healthy deployment.
 
 For the existing workflow, set `AWS_REGION=eu-west-2`. Terraform returns
 `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION` (the family),
-`ECS_CONTAINER_NAME`, and `APP_URL` to the deploy job and publishes them as
-repository variables. Configure `AWS_ROLE_ARN` using your separately managed
+`ECS_CONTAINER_NAME`, and `APP_URL` to the deploy job as reusable workflow
+outputs. Configure `AWS_ROLE_ARN` using your separately managed
 GitHub OIDC role.
 Terraform ignores service task definition revisions changed by CI/CD.
 Changes to Terraform task settings require a subsequent service deployment.
@@ -236,22 +231,12 @@ The workflow serializes Terraform operations and uses S3 state locks. It
 recalculates the plan after merge and applies that exact plan in the same job.
 The application deploy job then updates the ECS service with the built image.
 
-After a successful apply on `main`, Terraform CI automatically creates or updates
-`ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_DEFINITION`, `ECS_CONTAINER_NAME`, and
-`APP_URL` repository variables from the Terraform outputs.
-
 Set `AWS_ROLE_ARN` and `TF_APPLY_ROLE_ARN` as **environment secrets** under
 **Settings > Environments > menteeTest**. The workflows read role ARNs using
 the `secrets` context.
 
-Add the **environment secret** `TF_VARIABLES_TOKEN` under **Settings > Environments > menteeTest**: a fine-grained GitHub token
-restricted to this repository with **Variables: read and write** permission.
-The default `GITHUB_TOKEN` does not provide this permission. The publishing step
-uses this token only after apply on `main`; PR runs do not publish variables.
-
-The current app deployment uses the reusable workflow outputs immediately;
-it does not depend on GitHub refreshing repository variables mid-run. Published
-repository variables are also available to subsequent workflows.
+The app deployment reads Terraform outputs directly from the reusable workflow,
+so no GitHub token or repository variables are needed to pass them along.
 
 The release build, Terraform plan/apply, and ECS deploy jobs use `menteeTest`.
 The shared build job uses no environment for PRs and uses `menteeTest` for
@@ -261,5 +246,4 @@ the environment's deployment branch rules to allow only `main`, and add required
 reviewers if approval is desired. Both AWS OIDC roles must trust the subject
 `repo:adish98/MenteeTest:environment:menteeTest` with audience `sts.amazonaws.com`.
 Environment secrets are read inside the Terraform job rather than passed through
-the reusable workflow caller. Terraform still publishes its outputs as repository
-variables; the current deployment reads those values directly from job outputs.
+the reusable workflow caller.

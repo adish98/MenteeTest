@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      terraform:
+        description: Run Terraform (plan, manual approval, apply) before deploying. Uncheck to deploy only the new image.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -125,9 +130,13 @@ jobs:
           IMAGE: ${{ steps.image.outputs.name }}:${{ env.IMAGE_TAG }}
         run: docker push "$IMAGE"
 
+  # Reusable Terraform workflow. Pushes always run it; manual runs can skip it
+  # (input "terraform" unchecked) to deploy only the newly built image.
   terraform:
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || inputs.terraform)
     permissions:
       contents: read
       id-token: write
@@ -135,9 +144,14 @@ jobs:
     with:
       image_uri: ${{ needs.build.outputs.image }}
 
+  # Depends on build. Terraform must succeed when it runs; when it is skipped
+  # the deploy uses the existing infrastructure.
   deploy:
     needs: [build, terraform]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.build.result == 'success' &&
+      (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
     runs-on: ubuntu-latest
     environment: menteeTest
     timeout-minutes: 30
@@ -145,10 +159,12 @@ jobs:
       contents: read
       id-token: write
     env:
-      ECS_CLUSTER: ${{ needs.terraform.outputs.ecs_cluster }}
-      ECS_SERVICE: ${{ needs.terraform.outputs.ecs_service }}
-      ECS_TASK_DEFINITION: ${{ needs.terraform.outputs.task_definition }}
-      ECS_CONTAINER_NAME: ${{ needs.terraform.outputs.container_name }}
+      # Terraform names the cluster, service, task family, container and ALB
+      # after the app name, so these fall back to it when Terraform is skipped.
+      ECS_CLUSTER: ${{ needs.terraform.outputs.ecs_cluster || vars.TF_APP_NAME || 'exam-adi-shmul' }}
+      ECS_SERVICE: ${{ needs.terraform.outputs.ecs_service || vars.TF_APP_NAME || 'exam-adi-shmul' }}
+      ECS_TASK_DEFINITION: ${{ needs.terraform.outputs.task_definition || vars.TF_APP_NAME || 'exam-adi-shmul' }}
+      ECS_CONTAINER_NAME: ${{ needs.terraform.outputs.container_name || vars.TF_APP_NAME || 'exam-adi-shmul' }}
       APP_URL: ${{ needs.terraform.outputs.app_url }}
     steps:
       - name: Connect to AWS
@@ -157,6 +173,11 @@ jobs:
           role-to-assume: arn:aws:iam::030454160336:role/exam-adi-shmul
           aws-region: ${{ vars.AWS_REGION }}
           retry-max-attempts: 3
+      - name: Look up application URL
+        if: env.APP_URL == ''
+        run: |
+          dns=$(aws elbv2 describe-load-balancers --names "$ECS_CLUSTER"             --query 'LoadBalancers[0].DNSName' --output text)
+          echo "APP_URL=http://$dns" >> "$GITHUB_ENV"
       - name: Download task definition and enable rollback
         run: |
           aws ecs describe-task-definition --task-definition "$ECS_TASK_DEFINITION" \

@@ -117,8 +117,10 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Manual gate. The menteeTest-approval environment must have required
-  # reviewers; this job has no AWS access, it only waits for approval.
+  # Manual gate: the run pauses here until a required reviewer of the
+  # menteeTest-approval environment clicks "Review deployments" > Approve.
+  # Required reviewers can only be set in Settings > Environments, not in YAML.
+  # Waiting does not count toward timeout-minutes (GitHub waits up to 30 days).
   approve:
     needs: plan
     runs-on: ubuntu-latest

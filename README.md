@@ -25,10 +25,11 @@ When unset, it defaults to `0.0.0`.
 - `GET /` returns `{"message":"Hello World","version":"0.0.0"}` by default.
 - `GET /health` returns HTTP 200 with `{"status":"ok"}`.
 
-Run the unit tests:
+Run the unit tests (pytest is a dev-only dependency, not installed in the image):
 
 ```sh
-python -m unittest discover -v
+python -m pip install -r requirements-dev.txt
+python -m pytest -v
 ```
 
 Build and run with Docker:
@@ -44,9 +45,15 @@ Omit `-e APP_VERSION=1.2.3` to use the default version `0.0.0`.
 
 ## GitHub Actions deployment
 
-Pull requests to `main` build the image. Pushes to `main` and manual runs on
-`main` build and push to GitHub Container Registry (GHCR), call Terraform, then deploy only after
-Terraform checks, plan, apply, and variable publication succeed.
+Every run starts with a `test` job that runs the unit tests; if any test fails,
+nothing is built, pushed, or deployed. The `build` job then builds the image,
+starts it, and smoke-tests it (non-root user, `/health` returns ok, `/` reports
+the expected version). Only an image that passes is pushed.
+
+Pull requests to `main` run the tests and the image build and smoke test.
+Pushes to `main` and manual runs on `main` also push to GitHub Container
+Registry (GHCR), call Terraform, then deploy only after Terraform checks, plan,
+and apply succeed.
 The deploy job reads cluster, service, task family, container name, and URL
 directly from the called Terraform workflow's outputs.
 Tests can be run locally using the command above.

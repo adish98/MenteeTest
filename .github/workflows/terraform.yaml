@@ -81,7 +81,7 @@ jobs:
         working-directory: terraform/app
     env:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-      TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+      TF_STATE_REGION: ${{ vars.AWS_REGION }}
       TF_VAR_image_uri: ${{ inputs.image_uri }}
       TF_VAR_name: ${{ vars.TF_APP_NAME || 'exam-adi-shmul' }}
     steps:
@@ -98,6 +98,8 @@ jobs:
           retry-max-attempts: 3
       - name: Initialize remote state
         run: |
+          : "${TF_STATE_BUCKET:?Set TF_STATE_BUCKET after applying terraform/bootstrap}"
+          : "${TF_STATE_REGION:?Set AWS_REGION to the Terraform region}"
           terraform init -lockfile=readonly \
             -backend-config="bucket=$TF_STATE_BUCKET" \
             -backend-config="region=$TF_STATE_REGION"

@@ -10,9 +10,6 @@ on:
 permissions:
   contents: read
 
-env:
-  IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
-
 # Prevent overlapping production releases.
 concurrency:
   group: ci-cd-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
@@ -39,6 +36,8 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: menteeTest
+    env:
+      IMAGE_TAG: ${{ vars.APP_VERSION }}
     permissions:
       contents: read
       id-token: write
@@ -46,6 +45,13 @@ jobs:
       image: ${{ steps.login.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate application version
+        shell: bash
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || (( ${#IMAGE_TAG} > 128 )); then
+            echo '::error::Set APP_VERSION in the menteeTest environment to a Docker-compatible version such as 1.2.3 or 1.2.3-rc.1.'
+            exit 1
+          fi
       - name: Check OIDC identity
         uses: actions/github-script@v7
         env:
@@ -91,6 +97,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.login.outputs.registry || 'local' }}/${{ vars.ECR_REPOSITORY || 'exam-adi-shmul' }}:${{ env.IMAGE_TAG }}
+          build-args: APP_VERSION=${{ env.IMAGE_TAG }}
           labels: org.opencontainers.image.revision=${{ github.sha }}
           pull: true
           no-cache: ${{ github.event_name == 'workflow_dispatch' }}

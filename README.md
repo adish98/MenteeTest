@@ -50,8 +50,11 @@ Terraform checks, plan, apply, and variable publication succeed.
 The deploy job reads cluster, service, task family, container name, and URL
 directly from the called Terraform workflow's outputs.
 Tests can be run locally using the command above.
-Images use `<commit-sha>-<run_number>` tags. Retries reuse the same image;
-new manual runs produce a new tag and rebuild without cached layers.
+Images use the `APP_VERSION` GitHub environment variable as their tag (for
+example, `1.2.3`). The same value is baked into the container's `APP_VERSION`
+environment variable, which the API returns. Set a new version before each
+release; an existing version tag reuses its published image, including on
+manual runs and retries. Published versions are immutable.
 AWS authentication uses OIDC. No version-management token is required.
 
 Set these variables under **Settings > Environments > menteeTest > Environment variables**:
@@ -59,6 +62,7 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | Variable | Value |
 | --- | --- |
 | `AWS_REGION` | AWS region containing ECR and ECS |
+| `APP_VERSION` | Application and image version, for example `1.2.3` |
 | `ECR_REPOSITORY` | Existing ECR repository name, with tag immutability set to `IMMUTABLE` |
 | `ECS_CLUSTER` | Automatically published from Terraform |
 | `ECS_SERVICE` | Automatically published from Terraform |
@@ -85,6 +89,31 @@ workflow calls Terraform to provision application resources before deployment.
 Production pipelines run one at a time.
 
 ## Terraform application infrastructure
+
+### Create the Terraform state bucket once
+
+Before initializing the application, use AWS credentials with S3 provisioning
+permissions to run this from the repository root:
+
+```powershell
+terraform -chdir=terraform/bootstrap init
+terraform -chdir=terraform/bootstrap apply
+terraform -chdir=terraform/bootstrap output
+```
+
+This creates `exam-adi-shmul-tfstate-<AWS-account-ID>-eu-west-2` with versioning,
+AES256 encryption, blocked public access, and Terraform deletion protection.
+Use `-var="region=YOUR_REGION"` on apply to select another bucket region.
+Set the GitHub environment variables `TF_STATE_BUCKET` and `AWS_REGION`
+to the `state_bucket` and `state_region` outputs before running the app workflow.
+Use these same values in the application's `init` command below.
+
+Bootstrap uses local state because the bucket does not exist yet. Keep
+`terraform/bootstrap/terraform.tfstate` securely backed up and reuse it for
+future bootstrap operations; it is ignored by Git. Run bootstrap from a
+persistent machine, not an ephemeral CI runner. The application workflow uses
+the created bucket and does not run bootstrap. Commit the generated bootstrap
+`.terraform.lock.hcl` when initializing with your chosen provider version.
 
 Terraform in `terraform/app` creates the VPC, two public subnets, Internet
 Gateway, HTTP ALB, ECS cluster and Fargate service, CloudWatch logs, and task
@@ -158,7 +187,6 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | --- | --- |
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
 | `TF_STATE_BUCKET` | Existing S3 state bucket name |
-| `TF_STATE_REGION` | AWS region of the state bucket |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
 
 The Terraform apply role is separate from the application deployment role.

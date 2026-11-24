@@ -131,8 +131,9 @@ the created bucket. Commit the generated bootstrap
 `.terraform.lock.hcl` when initializing with your chosen provider version.
 
 Terraform in `terraform/app` creates the VPC, two public subnets, Internet
-Gateway, HTTP ALB, ECS cluster and Fargate service, CloudWatch logs, and task
-execution role in `eu-west-2`. ECR and GitHub authentication are managed separately.
+Gateway, HTTP ALB, ECS cluster and Fargate service, CloudWatch logs, and (unless
+an existing one is supplied) the ECS task execution role in `eu-west-2`. ECR and
+GitHub authentication are managed separately.
 
 Requires Terraform 1.10+ and AWS credentials with provisioning permissions.
 Push the initial Linux AMD64 image to an existing ECR repository first.
@@ -203,12 +204,17 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
 | `TF_STATE_BUCKET` | S3 state bucket name; created automatically if missing |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
+| `ECS_EXECUTION_ROLE_ARN` | Optional existing ECS task execution role ARN; leave unset to let Terraform create one |
 
 The Terraform apply role is separate from the application deployment role.
 Configure its OIDC trust subject as `repo:OWNER/REPO:environment:menteeTest` with
 audience `sts.amazonaws.com`. A PR plan role is no longer needed.
-The apply role needs VPC/EC2, ELB, ECS, CloudWatch Logs, and task execution IAM
-role provisioning permissions, including `iam:PassRole` for that execution role.
+The apply role needs VPC/EC2, ELB, ECS, and CloudWatch Logs provisioning
+permissions, plus `iam:PassRole` for the ECS execution role. By default Terraform
+creates `<name>-execution` with the `candidate-exam-boundary` permissions boundary
+(required by the exam IAM policy for `iam:CreateRole`). To use an existing role
+instead, set `ECS_EXECUTION_ROLE_ARN` to a role that trusts
+`ecs-tasks.amazonaws.com` and has `AmazonECSTaskExecutionRolePolicy` attached.
 
 The apply role needs `s3:ListBucket` on the state bucket, `s3:GetObject` on
 `exam-adi-shmul/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and

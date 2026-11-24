@@ -9,8 +9,15 @@ resource "aws_ecs_cluster" "app" {
   name = var.name
 }
 
+locals {
+  create_execution_role = var.execution_role_arn == ""
+  execution_role_arn    = local.create_execution_role ? aws_iam_role.execution[0].arn : var.execution_role_arn
+}
+
 resource "aws_iam_role" "execution" {
-  name = "${var.name}-execution"
+  count                = local.create_execution_role ? 1 : 0
+  name                 = "${var.name}-execution"
+  permissions_boundary = var.execution_role_permissions_boundary
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -22,7 +29,8 @@ resource "aws_iam_role" "execution" {
 }
 
 resource "aws_iam_role_policy_attachment" "execution" {
-  role       = aws_iam_role.execution.name
+  count      = local.create_execution_role ? 1 : 0
+  role       = aws_iam_role.execution[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
@@ -32,7 +40,7 @@ resource "aws_ecs_task_definition" "app" {
   network_mode             = "awsvpc"
   cpu                      = "256"
   memory                   = "512"
-  execution_role_arn       = aws_iam_role.execution.arn
+  execution_role_arn       = local.execution_role_arn
 
   runtime_platform {
     operating_system_family = "LINUX"

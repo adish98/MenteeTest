@@ -83,6 +83,7 @@ jobs:
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_REGION: ${{ vars.AWS_REGION }}
       TF_VAR_image_uri: ${{ inputs.image_uri }}
+      TF_VAR_execution_role_arn: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
       TF_VAR_name: ${{ vars.TF_APP_NAME || 'exam-adi-shmul' }}
     steps:
       - uses: actions/checkout@v4

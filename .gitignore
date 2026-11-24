@@ -1,10 +1,52 @@
+# Notes and scratch docs (README.md is the only Markdown file kept in Git)
+*.md
+!README.md
+
+# Terraform
 **/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfvars
+!*.tfvars.example
 *.tfplan
 crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
 
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
 
 # PowerShell module cache accidentally written into the repo
 Microsoft/
+
+# Logs
+*.log

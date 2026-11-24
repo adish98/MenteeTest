@@ -84,13 +84,28 @@ Configure the IAM role's OIDC trust for the `menteeTest` environment with
 audience `sts.amazonaws.com`. Give it ECR read/push permissions, ECS task
 definition read/register and service read/update permissions, and `iam:PassRole`
 for the task and execution roles. The ECS execution role must be able to pull
-from ECR. ECR, the state bucket, and OIDC roles must already exist. The app
+from ECR. ECR and OIDC roles must already exist. The state bucket is created
+automatically if missing. The app
 workflow calls Terraform to provision application resources before deployment.
 Production pipelines run one at a time.
 
 ## Terraform application infrastructure
 
-### Create the Terraform state bucket once
+### Automatic state bucket creation
+
+Before backend initialization, the pipeline creates `TF_STATE_BUCKET` in
+`AWS_REGION` if missing, with versioning, AES256 encryption, and public access
+blocked. An existing bucket owned by the current AWS account is reused without
+changes. Permission errors stop the pipeline. Choose a globally unique bucket
+name. No manual bootstrap is required for CI.
+
+The pipeline uses the AWS CLI so bootstrap state does not need to persist on
+temporary runners. The apply role additionally needs `s3:CreateBucket`,
+`s3:PutBucketPublicAccessBlock`, `s3:PutBucketVersioning`, and
+`s3:PutEncryptionConfiguration` on the chosen bucket. Existing buckets should
+already have those protections.
+
+### Optional manual bucket creation
 
 Before initializing the application, use AWS credentials with S3 provisioning
 permissions to run this from the repository root:
@@ -111,8 +126,8 @@ Use these same values in the application's `init` command below.
 Bootstrap uses local state because the bucket does not exist yet. Keep
 `terraform/bootstrap/terraform.tfstate` securely backed up and reuse it for
 future bootstrap operations; it is ignored by Git. Run bootstrap from a
-persistent machine, not an ephemeral CI runner. The application workflow uses
-the created bucket and does not run bootstrap. Commit the generated bootstrap
+persistent machine, not an ephemeral CI runner. The application workflow reuses
+the created bucket. Commit the generated bootstrap
 `.terraform.lock.hcl` when initializing with your chosen provider version.
 
 Terraform in `terraform/app` creates the VPC, two public subnets, Internet
@@ -186,7 +201,7 @@ Set these variables under **Settings > Environments > menteeTest > Environment v
 | Variable | Value |
 | --- | --- |
 | `AWS_REGION` | `eu-west-2`, matching the provider configuration |
-| `TF_STATE_BUCKET` | Existing S3 state bucket name |
+| `TF_STATE_BUCKET` | S3 state bucket name; created automatically if missing |
 | `TF_APP_NAME` | Optional app name; defaults to `exam-adi-shmul` |
 
 The Terraform apply role is separate from the application deployment role.
@@ -199,7 +214,7 @@ The apply role needs `s3:ListBucket` on the state bucket, `s3:GetObject` on
 `exam-adi-shmul/app/terraform.tfstate`, and `s3:GetObject`, `s3:PutObject`, and
 `s3:DeleteObject` on `exam-adi-shmul/app/terraform.tfstate.tflock`. The apply role
 also needs `s3:PutObject` on the state object. Add KMS access if the bucket uses
-a customer-managed KMS key. The bucket and OIDC roles are managed separately.
+a customer-managed KMS key. OIDC roles are managed separately.
 
 If you already deployed using local state, migrate it once **before enabling
 the workflow**, from the machine holding the existing state:

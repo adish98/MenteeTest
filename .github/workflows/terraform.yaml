@@ -151,3 +151,4 @@ jobs:
             value=$(terraform output -raw "${mapping#*:}")
             echo "${mapping%%:*}=$value" >> "$GITHUB_OUTPUT"
           done
+          echo "::notice title=Application URL::$(terraform output -raw application_url)"

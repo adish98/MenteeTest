@@ -256,7 +256,9 @@ it does not depend on GitHub refreshing repository variables mid-run. Published
 repository variables are also available to subsequent workflows.
 
 The release build, Terraform plan/apply, and ECS deploy jobs use `menteeTest`.
-PR image builds and Terraform lint jobs do not use the environment. Configure
+The shared build job uses no environment for PRs and uses `menteeTest` for
+releases. PR builds skip AWS authentication and image pushing. Terraform lint
+jobs do not use the environment. Configure
 the environment's deployment branch rules to allow only `main`, and add required
 reviewers if approval is desired. Both AWS OIDC roles must trust the subject
 `repo:adish98/MenteeTest:environment:menteeTest` with audience `sts.amazonaws.com`.
